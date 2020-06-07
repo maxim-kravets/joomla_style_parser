@@ -1,0 +1,152 @@
+#!/usr/bin/env php
+<?php
+
+use PHPHtmlParser\Dom;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Output\ConsoleOutput;
+use Symfony\Component\Console\Style\SymfonyStyle;
+
+require_once dirname(__DIR__).'/vendor/autoload.php';
+
+$input = new ArgvInput();
+$output = new ConsoleOutput();
+$io = new SymfonyStyle($input, $output);
+
+$dom = new Dom();
+$writer = new XLSXWriter();
+$products_links = [];
+
+$domain = 'http://joma-style.com.ua';
+$target_categories = [
+    '/group/1/section/1/category/1/subcategory/1/',
+    '/group/1/section/1/category/1/subcategory/2/',
+    '/group/1/section/1/category/1/subcategory/3/',
+    '/group/1/section/1/category/1/subcategory/4/',
+    '/group/1/section/1/category/1/subcategory/5/',
+    '/group/1/section/1/category/1/subcategory/6/',
+    '/group/1/section/1/category/1/subcategory/154/',
+    '/group/1/section/1/category/8/subcategory/167/',
+    '/group/1/section/1/category/8/subcategory/169/',
+    '/group/1/section/1/category/8/subcategory/170/',
+    '/group/1/section/1/category/8/subcategory/171/',
+    '/group/1/section/1/category/8/subcategory/205/',
+    '/group/1/section/1/category/9/subcategory/123/',
+    '/group/1/section/1/category/9/subcategory/133/',
+    '/group/1/section/1/category/11/',
+    '/group/1/section/1/category/10/subcategory/152/',
+    '/group/1/section/1/category/10/subcategory/153/',
+    '/group/1/section/1/category/10/subcategory/60/',
+    '/group/1/section/1/category/10/subcategory/61/',
+    '/group/1/section/1/category/12/subcategory/63/',
+    '/group/2/section/1/category/29/',
+    '/group/2/section/1/category/30/',
+    '/group/2/section/1/category/31/',
+    '/group/2/section/1/category/32/',
+    '/group/2/section/1/category/36/',
+    '/group/2/section/3/category/45/subcategory/148/',
+    '/group/2/section/3/category/45/subcategory/149/',
+    '/group/2/section/3/category/45/subcategory/150/',
+    '/group/3/section/1/category/47/subcategory/173/',
+    '/group/3/section/1/category/47/subcategory/174/',
+    '/group/3/section/1/category/47/subcategory/175/',
+    '/group/3/section/1/category/47/subcategory/176/',
+    '/group/3/section/1/category/48/',
+    '/group/3/section/1/category/49/subcategory/203/',
+    '/group/3/section/1/category/49/subcategory/204/',
+    '/group/3/section/1/category/50/',
+    '/group/3/section/1/category/51/',
+    '/group/3/section/1/category/52/',
+    '/group/3/section/1/category/53/',
+    '/group/3/section/1/category/70/',
+    '/group/4/section/2/category/62/subcategory/191/',
+    '/group/4/section/2/category/62/subcategory/192/',
+    '/group/4/section/2/category/63/subcategory/193/',
+    '/group/4/section/2/category/63/subcategory/200/',
+    '/group/4/section/2/category/63/subcategory/201/',
+    '/group/4/section/2/category/63/subcategory/202/'
+];
+
+foreach ($target_categories as $category) {
+
+    try {
+        $dom->load(file_get_contents($domain.$category));
+        $products_per_page = 12;
+        $amount = (int) str_replace('Всього знайдено: ', '', $dom->find('.amount')->text);
+        $pages = ceil($amount / $products_per_page);
+
+        for ($page = 1; $page <= $pages; $page++) {
+            $products_grid_link = $domain.$category.'?mode=grid&collection=0&order=name&dir=asc&limit='.$products_per_page.'&page='.$page;
+
+            try {
+                $dom->load(file_get_contents($products_grid_link));
+                $products_cards = $dom->find('.products-grid')->find('.item');
+
+                foreach ($products_cards as $card) {
+                    $products_links[] = $domain.$card->find('.product-image')->getAttribute('href');
+                }
+            } catch (Exception $e) {
+                $io->error($e->getMessage());
+                die();
+            }
+        }
+    } catch (Exception $e) {
+        $io->error($e->getMessage());
+        die();
+    }
+}
+
+$products = [];
+foreach ($products_links as $product_link) {
+    try {
+
+        preg_match('/\/[0-9]+\//', $product_link, $matches);
+        $product_id = str_replace('/', '',$matches[0]);
+        $product_page = $dom->load($product_link);
+        $product_name = $dom->find('.product-name')->find('h1')->text;
+        $product_price = $dom->find('.price')->text;
+        $product_vendor_code = $dom->find('.price-box-wrap')->find('.sku')->find('span')->text;
+        $product_image_url = $domain.$dom->find('.product-img-box')->find('img')->getAttribute('src');
+        $product_info_rows = $dom->find('.short-description')->find('.std')->find('p');
+
+        $product_characteristic = '';
+        $product_description = '';
+        foreach ($product_info_rows as $product_info_row) {
+            $text = trim(html_entity_decode(strip_tags($product_info_row->innerHtml)));
+
+            if (
+                preg_match('/$[a-zA-Zа-я]*:]/', $text) !== false &&
+                stripos($text, 'Описі:') === false &&
+                stripos($text, 'Опис:') === false
+            ) {
+                $product_characteristic .= $text."\n";
+            } elseif (
+                stripos($text, 'Описі:') !== false ||
+                stripos($text, 'Опис:') !== false
+            ) {
+                $product_description = trim(str_replace('Описі:', '', str_replace('Опис:', '', $text)))."\n";
+            } elseif (preg_match('/$[a-zA-Zа-я]*:]/', $text) === false) {
+                $product_description .= $product_info_rows->lastChild()->text;
+            }
+        }
+
+        $products[] = [
+            $product_id,
+            $product_vendor_code,
+            $product_price,
+            $product_image_url,
+            $product_characteristic,
+            $product_name,
+            $product_description
+        ];
+
+    } catch (Exception $e) {
+        $io->error($e->getMessage());
+        die();
+    }
+}
+
+$header_row = ['ИД товара', 'Код товара', 'Цена', 'Файл изображения', 'Характеристики', 'Наименование', 'Описание'];
+$data = array_merge([$header_row], $products);
+
+$writer->writeSheet($data);
+$writer->writeToFile('output.xls');
